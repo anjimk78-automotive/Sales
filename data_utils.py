@@ -132,12 +132,20 @@ def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
 
     # Types
     def _to_number(series):
-        # Handles comma-formatted numbers stored as text, e.g. "1,500.00"
-        cleaned = series.astype(str).str.replace(",", "", regex=False).str.strip()
+        # Handles comma-formatted numbers stored as text, e.g. "1,500.00",
+        # accounting-style negatives in parentheses e.g. "(1,500.00)",
+        # and leading/trailing currency symbols or whitespace.
+        cleaned = series.astype(str).str.strip()
+        cleaned = cleaned.str.replace(",", "", regex=False)
+        cleaned = cleaned.str.replace(r"^\((.*)\)$", r"-\1", regex=True)  # (1500) -> -1500
+        cleaned = cleaned.str.replace(r"[^0-9.\-]", "", regex=True)  # strip stray symbols
+        cleaned = cleaned.replace("", pd.NA)
         return pd.to_numeric(cleaned, errors="coerce")
 
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
     df["MonthNum"] = df["Month"].apply(_month_to_num)
+    # Sums naturally net out negative Sales Amt (returns/discounts) rather
+    # than excluding them, as long as they parse correctly.
     df["Sales Amt"] = _to_number(df["Sales Amt"]).fillna(0.0)
     df["Quantity"] = _to_number(df["Quantity"]).fillna(0.0)
 
