@@ -183,27 +183,36 @@ def zone_options(frame: pd.DataFrame):
 
 def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, text_fmt=None):
     """Plotly line chart with the value shown at each point, plus the
-    point-over-point percentage increase/decrease in brackets, styled to
-    match the rest of the dashboard."""
+    point-over-point percentage increase/decrease in brackets — red for a
+    decrease, green for an increase — styled to match the rest of the
+    dashboard."""
     if text_fmt is None:
         text_fmt = lambda v: f"{v:,.0f}"
     plot_df = plot_df.copy()
 
+    DECREASE_COLOR = "#D93025"
+    INCREASE_COLOR = "#1E8E3E"
+    NEUTRAL_COLOR = "#1F2A44"
+
     values = plot_df[y_col].tolist()
     labels = []
     for i, val in enumerate(values):
-        label = text_fmt(val)
+        value_text = text_fmt(val)
         if i == 0:
-            labels.append(label)
+            labels.append(value_text)
             continue
         prev = values[i - 1]
         if prev == 0:
-            change_str = "New" if val != 0 else None
+            if val != 0:
+                bracket = f"<span style='color:{INCREASE_COLOR}'>(New)</span>"
+            else:
+                bracket = ""
         else:
             change = (val - prev) / abs(prev) * 100
+            color = INCREASE_COLOR if change >= 0 else DECREASE_COLOR
             sign = "+" if change >= 0 else "−"
-            change_str = f"{sign}{abs(change):.1f}%"
-        labels.append(f"{label} ({change_str})" if change_str else label)
+            bracket = f"<span style='color:{color}'>({sign}{abs(change):.1f}%)</span>"
+        labels.append(f"{value_text} {bracket}" if bracket else value_text)
     plot_df["_label"] = labels
 
     fig = px.line(
@@ -213,7 +222,7 @@ def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, text_fmt=None)
         line=dict(width=3, color=ACCENT),
         marker=dict(size=8, color=ACCENT),
         textposition="top center",
-        textfont=dict(size=11, color="#1F2A44"),
+        textfont=dict(size=11, color=NEUTRAL_COLOR),
     )
     fig.update_layout(
         xaxis_title="Time Frame",
