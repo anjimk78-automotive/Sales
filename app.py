@@ -235,6 +235,7 @@ def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, text_fmt=None)
             bracket = f"<span style='color:{color}'>({sign}{abs(change):.1f}%)</span>"
         labels.append(f"{value_text} {bracket}" if bracket else value_text)
     plot_df["_label"] = labels
+    plot_df["_hover_value"] = [text_fmt(v) for v in values]
 
     fig = px.line(
         plot_df, x=x_col, y=y_col, markers=True, text="_label", title=title,
@@ -244,6 +245,8 @@ def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, text_fmt=None)
         marker=dict(size=8, color=ACCENT),
         textposition="top center",
         textfont=dict(size=11, color=NEUTRAL_COLOR),
+        customdata=plot_df["_hover_value"],
+        hovertemplate="%{x}<br>" + y_label + ": <b>%{customdata}</b><extra></extra>",
     )
     fig.update_layout(
         xaxis_title="Time Frame",
