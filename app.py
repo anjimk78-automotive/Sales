@@ -70,12 +70,12 @@ with st.sidebar:
 
     with st.expander("📁 Data Source", expanded="data" not in st.session_state):
         st.caption(
-            "Paste your normal Google Sheets share link below (the sheet's "
-            "general access must be set to 'Anyone with the link' - Viewer). "
-            "Or upload a CSV/XLSX export instead."
+            "Paste your Google Sheets link below. The sheet's General "
+            "access must be set to 'Anyone with the link' - Viewer "
+            "(Share button, top right of the sheet) or Google will block "
+            "this app from reading it."
         )
-        sheet_url = st.text_input("Google Sheet link (share or edit URL)", value="")
-        uploaded_file = st.file_uploader("...or upload CSV or XLSX", type=["csv", "xlsx", "xls"])
+        sheet_url = st.text_input("Google Sheet link", value="")
         load_clicked = st.button("Load / Refresh Data", use_container_width=True)
 
     st.markdown("---")
@@ -98,8 +98,6 @@ if load_clicked or ("data" not in st.session_state):
     try:
         if sheet_url.strip():
             raw = load_dataframe_from_url(sheet_url.strip())
-        elif uploaded_file is not None:
-            raw = load_dataframe(uploaded_file)
         elif "data" in st.session_state:
             raw = None
         else:
