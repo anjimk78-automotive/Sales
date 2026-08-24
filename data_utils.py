@@ -70,10 +70,45 @@ def load_dataframe(file_or_buffer, sheet_name: str = "Sheet1") -> pd.DataFrame:
     return df
 
 
+def normalize_google_sheet_url(url: str, gid: str = "0") -> str:
+    """Accept any normal Google Sheets URL (the /edit?usp=sharing link you
+    copy from the Share button, a /pub link, or an already-correct export
+    link) and turn it into a direct CSV export URL.
+
+    This only works if the sheet's general access is set to
+    'Anyone with the link' (Viewer) -- Google will still reject the request
+    with a 401 for restricted/private sheets, since there is no login here.
+    """
+    url = url.strip()
+
+    # Already a published-to-web CSV link -> use as-is.
+    if "output=csv" in url or "/pub" in url and "csv" in url:
+        return url
+
+    # Standard /d/<ID>/... link -> build the export URL.
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
+    if match:
+        sheet_id = match.group(1)
+        gid_match = re.search(r"[?&#]gid=([0-9]+)", url)
+        use_gid = gid_match.group(1) if gid_match else gid
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={use_gid}"
+
+    # Fallback: return the URL unchanged (e.g. user already pasted an export link)
+    return url
+
+
 @st.cache_data(show_spinner=False)
 def load_dataframe_from_url(csv_url: str) -> pd.DataFrame:
     """Load raw sales data from a public Google Sheets CSV export URL."""
-    return pd.read_csv(csv_url)
+    direct_url = normalize_google_sheet_url(csv_url)
+    try:
+        return pd.read_csv(direct_url)
+    except Exception as e:
+        raise ValueError(
+            "Could not read the Google Sheet. Make sure its sharing setting "
+            "is 'Anyone with the link' (Viewer) -- Share -> General access -- "
+            f"then try again. (Underlying error: {e})"
+        )
 
 
 def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
