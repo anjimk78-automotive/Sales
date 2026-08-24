@@ -14,7 +14,7 @@ import streamlit as st
 # first if there were ever overlapping prefixes. Currently all are distinct.
 SALES_TYPE_CODES = [
     "FEED", "PROB", "PUMP", "CHEM", "GEOM",
-    "PADW", "PAIT", "GEIT", "TEST", "OTHE",
+    "PADW", "PAIT", "GEIT", "TEST", "OTHR",
 ]
 ALL_SALES_LABEL = "All Sales"
 SALES_TYPE_OPTIONS = [ALL_SALES_LABEL] + SALES_TYPE_CODES
@@ -33,14 +33,14 @@ MONTH_NAME_TO_NUM = {
 
 def classify_sales_type(item_no: str) -> str:
     """Return the Sales Type code for a given Item No., based on its prefix.
-    Falls back to 'OTHE' if no known prefix matches."""
+    Falls back to 'OTHR' if no known prefix matches."""
     if not isinstance(item_no, str):
-        return "OTHE"
+        return "OTHR"
     code = item_no.strip().upper()
     for prefix in SALES_TYPE_CODES:
         if code.startswith(prefix):
             return prefix
-    return "OTHE"
+    return "OTHR"
 
 
 def _month_to_num(month_val) -> int:
@@ -131,10 +131,15 @@ def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         )
 
     # Types
+    def _to_number(series):
+        # Handles comma-formatted numbers stored as text, e.g. "1,500.00"
+        cleaned = series.astype(str).str.replace(",", "", regex=False).str.strip()
+        return pd.to_numeric(cleaned, errors="coerce")
+
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
     df["MonthNum"] = df["Month"].apply(_month_to_num)
-    df["Sales Amt"] = pd.to_numeric(df["Sales Amt"], errors="coerce").fillna(0.0)
-    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0.0)
+    df["Sales Amt"] = _to_number(df["Sales Amt"]).fillna(0.0)
+    df["Quantity"] = _to_number(df["Quantity"]).fillna(0.0)
 
     df = df.dropna(subset=["Year", "MonthNum"]).copy()
     df["Year"] = df["Year"].astype(int)
@@ -144,7 +149,8 @@ def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df["Sales Type"] = df["Item No."].apply(classify_sales_type)
 
     # Zone / Customer cleanup
-    df["Zone"] = df["Zone"].astype(str).str.strip()
+    df["Zone"] = df["Zone"].fillna("Unassigned").astype(str).str.strip()
+    df["Zone"] = df["Zone"].replace({"": "Unassigned", "nan": "Unassigned", "None": "Unassigned"})
     df["Customer Code"] = df["Customer Code"].astype(str).str.strip()
     df["Customer Name"] = df["Customer Name"].astype(str).str.strip()
     df["Customer Display"] = df["Customer Name"] + " (" + df["Customer Code"] + ")"
