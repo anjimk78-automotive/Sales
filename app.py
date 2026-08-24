@@ -128,9 +128,6 @@ def get_data(url: str):
 with st.sidebar:
     st.markdown("### 📊 Sales Analysis")
     st.caption("Connected to the live Sales Data sheet.")
-    if st.button("🔄 Refresh Data", use_container_width=True):
-        get_data.clear()
-        st.rerun()
 
 try:
     df = get_data(SHEET_URL)
@@ -169,7 +166,7 @@ if load_error is not None:
     st.error(
         "Could not load the live sheet. Make sure its General access is set "
         "to **'Anyone with the link' (Viewer)** in Google Sheets' Share "
-        f"dialog, then click **Refresh Data**.\n\nDetails: {load_error}"
+        f"dialog, then reload the page.\n\nDetails: {load_error}"
     )
     st.stop()
 
@@ -185,12 +182,29 @@ def zone_options(frame: pd.DataFrame):
 
 
 def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, text_fmt=None):
-    """Plotly line chart with the value shown at each point, styled to match
-    the rest of the dashboard."""
+    """Plotly line chart with the value shown at each point, plus the
+    point-over-point percentage increase/decrease in brackets, styled to
+    match the rest of the dashboard."""
     if text_fmt is None:
         text_fmt = lambda v: f"{v:,.0f}"
     plot_df = plot_df.copy()
-    plot_df["_label"] = plot_df[y_col].apply(text_fmt)
+
+    values = plot_df[y_col].tolist()
+    labels = []
+    for i, val in enumerate(values):
+        label = text_fmt(val)
+        if i == 0:
+            labels.append(label)
+            continue
+        prev = values[i - 1]
+        if prev == 0:
+            change_str = "New" if val != 0 else None
+        else:
+            change = (val - prev) / abs(prev) * 100
+            sign = "+" if change >= 0 else "−"
+            change_str = f"{sign}{abs(change):.1f}%"
+        labels.append(f"{label} ({change_str})" if change_str else label)
+    plot_df["_label"] = labels
 
     fig = px.line(
         plot_df, x=x_col, y=y_col, markers=True, text="_label", title=title,
