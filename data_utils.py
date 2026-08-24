@@ -1,499 +1,263 @@
 """
-Sales Analysis Streamlit Application
-=====================================
-Live-connected to the company Sales Data Google Sheet (Sheet1):
-    Year, Month, Item No., Item Description, Customer Code, Customer Name,
-    Quantity, Sales Amt, Gross Profit (currency), Gross Profit,
-    Gross Profit %, Column1, Zone
-
-Four sections, selectable from the sidebar on the RIGHT of the screen:
-    1. Zone Wise Sale Analysis
-    2. Item Wise Sales Analysis
-    3. Sales % Contribution Analysis
-    4. Sales % with Time Analysis
-
-Run with:  streamlit run app.py
+data_utils.py
+Shared data loading, cleaning, and helper functions for the Sales Analysis app.
 """
 
-from datetime import datetime
-
+import re
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
-from data_utils import (
-    ALL_SALES_LABEL,
-    ALL_ZONES_LABEL,
-    SALES_TYPE_OPTIONS,
-    TIME_FRAME_OPTIONS,
-    PERIOD_COL,
-    filter_by_sales_type,
-    filter_by_zone,
-    get_period_order,
-    load_dataframe_from_url,
-    prepare_dataframe,
-)
-
 # ---------------------------------------------------------------------------
-# Fixed data source — your live Google Sheet. No upload / link entry needed.
-# To point this app at a different sheet, just change the URL below.
+# Sales Type configuration
 # ---------------------------------------------------------------------------
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1vXveJ2TUXeeyWg5DO2aYe-7yfmEc3Azau4g1NghNQDo/edit?gid=0#gid=0"
-CACHE_TTL_SECONDS = 300  # data refreshes automatically every 5 minutes
+# Order matters only in that longer/more-specific codes should be checked
+# first if there were ever overlapping prefixes. Currently all are distinct.
+SALES_TYPE_CODES = [
+    "FEED", "PROB", "PUMP", "CHEM", "GEOM",
+    "PADW", "PAIT", "GEIT", "TEST", "OTHR",
+]
+ALL_SALES_LABEL = "All Sales"
+SALES_TYPE_OPTIONS = [ALL_SALES_LABEL] + SALES_TYPE_CODES
 
-ACCENT = "#2E5AAC"
-CHART_COLORWAY = ["#2E5AAC", "#E8833A", "#3FA672", "#B23B5E", "#7B5EA7", "#4FA8C9"]
+ALL_ZONES_LABEL = "All Zones"
 
-st.set_page_config(
-    page_title="Sales Analysis Dashboard",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+TIME_FRAME_OPTIONS = ["Yearly", "Monthly", "Quarterly"]
 
-# ---------------------------------------------------------------------------
-# Global styling: a cleaner, more "designed" look.
-# ---------------------------------------------------------------------------
-st.markdown(
-    f"""
-    <style>
-        html, body, [class*="css"] {{
-            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-        }}
-
-        /* --- Page header banner --- */
-        .app-header {{
-            background: linear-gradient(90deg, {ACCENT} 0%, #4A78C9 100%);
-            padding: 1.4rem 1.8rem;
-            border-radius: 12px;
-            color: white;
-            margin-bottom: 1.4rem;
-        }}
-        .app-header h1 {{
-            margin: 0;
-            font-size: 1.6rem;
-            font-weight: 700;
-        }}
-        .app-header p {{
-            margin: 0.25rem 0 0 0;
-            opacity: 0.9;
-            font-size: 0.92rem;
-        }}
-
-        /* --- Section header --- */
-        .section-title {{
-            font-size: 1.35rem;
-            font-weight: 700;
-            color: #1F2A44;
-            margin-bottom: 0.1rem;
-        }}
-        .section-caption {{
-            color: #5B6472;
-            font-size: 0.92rem;
-            margin-bottom: 1.1rem;
-        }}
-
-        /* --- Metric cards --- */
-        div[data-testid="stMetric"] {{
-            background: #F7F9FC;
-            border: 1px solid #E7EBF2;
-            border-radius: 10px;
-            padding: 0.9rem 1rem 0.6rem 1rem;
-        }}
-        div[data-testid="stMetricLabel"] {{
-            font-weight: 600;
-            color: #5B6472;
-        }}
-
-        /* --- Sidebar nav radio buttons look like nav items --- */
-        section[data-testid="stSidebar"] .stRadio > label {{
-            font-weight: 600;
-        }}
-    </style>
-
-    """,
-    unsafe_allow_html=True,
-)
+MONTH_NAME_TO_NUM = {
+    "JAN": 1, "JANUARY": 1, "FEB": 2, "FEBRUARY": 2, "MAR": 3, "MARCH": 3,
+    "APR": 4, "APRIL": 4, "MAY": 5, "JUN": 6, "JUNE": 6, "JUL": 7, "JULY": 7,
+    "AUG": 8, "AUGUST": 8, "SEP": 9, "SEPT": 9, "SEPTEMBER": 9,
+    "OCT": 10, "OCTOBER": 10, "NOV": 11, "NOVEMBER": 11, "DEC": 12, "DECEMBER": 12,
+}
 
 
-# ---------------------------------------------------------------------------
-# Data loading — cached, auto-refreshing, live from the Google Sheet above.
-# ---------------------------------------------------------------------------
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Connecting to live sales sheet…")
-def get_data(url: str):
-    raw = load_dataframe_from_url(url)
-    return prepare_dataframe(raw)
+def classify_sales_type(item_no: str) -> str:
+    """Return the Sales Type code for a given Item No., based on its prefix.
+    Falls back to 'OTHR' if no known prefix matches."""
+    if not isinstance(item_no, str):
+        return "OTHR"
+    code = item_no.strip().upper()
+    for prefix in SALES_TYPE_CODES:
+        if code.startswith(prefix):
+            return prefix
+    return "OTHR"
 
 
-with st.sidebar:
-    st.markdown("### 📊 Sales Analysis")
-    st.caption("Connected to the live Sales Data sheet.")
-
-try:
-    df = get_data(SHEET_URL)
-    load_error = None
-except Exception as e:
-    df = None
-    load_error = e
-
-with st.sidebar:
-    if df is not None:
-        st.caption(f"Last loaded: {datetime.now().strftime('%b %d, %Y • %I:%M %p')}")
-    st.markdown("---")
-    st.markdown("#### Sections")
-    section = st.radio(
-        "Go to:",
-        [
-            "1. Zone Wise Sale Analysis",
-            "2. Item Wise Sales Analysis",
-            "3. Sales % Contribution Analysis",
-            "4. Sales % with Time Analysis",
-        ],
-        label_visibility="collapsed",
-    )
-
-st.markdown(
-    """
-    <div class="app-header">
-        <h1>📊 Sales Analysis Dashboard</h1>
-        <p>Zone, item, and customer-level sales performance — live from the company Sales Data sheet.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-if load_error is not None:
-    st.error(
-        "Could not load the live sheet. Make sure its General access is set "
-        "to **'Anyone with the link' (Viewer)** in Google Sheets' Share "
-        f"dialog, then reload the page.\n\nDetails: {load_error}"
-    )
-    st.stop()
-
-# Surface any rows that didn't parse cleanly instead of silently treating
-# them as 0 / dropping them, so totals can be trusted.
-_bad_sales = df.attrs.get("sales_amt_unparsed_count", 0)
-_bad_qty = df.attrs.get("quantity_unparsed_count", 0)
-_dropped = df.attrs.get("rows_dropped_bad_period", 0)
-if _bad_sales or _bad_qty or _dropped:
-    msg_parts = []
-    if _bad_sales:
-        examples = ", ".join(repr(v) for v in df.attrs.get("sales_amt_unparsed_examples", [])[:5])
-        msg_parts.append(f"**{_bad_sales}** row(s) had a Sales Amt value that couldn't be read as a number (treated as 0) — e.g. {examples}.")
-    if _bad_qty:
-        examples = ", ".join(repr(v) for v in df.attrs.get("quantity_unparsed_examples", [])[:5])
-        msg_parts.append(f"**{_bad_qty}** row(s) had a Quantity value that couldn't be read as a number (treated as 0) — e.g. {examples}.")
-    if _dropped:
-        msg_parts.append(f"**{_dropped}** row(s) were excluded because Year/Month couldn't be read.")
-    st.warning(
-        "⚠️ Data quality issue found in the sheet — some totals may be "
-        "understated:\n\n" + "\n\n".join(msg_parts) +
-        "\n\nFix these cells in the sheet and the numbers will update automatically."
-    )
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-px.defaults.color_discrete_sequence = CHART_COLORWAY
-px.defaults.template = "plotly_white"
-
-
-def zone_options(frame: pd.DataFrame):
-    return [ALL_ZONES_LABEL] + sorted(frame["Zone"].dropna().unique().tolist())
-
-
-def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, text_fmt=None):
-    """Plotly line chart with the value shown at each point, plus the
-    point-over-point percentage increase/decrease in brackets — red for a
-    decrease, green for an increase — styled to match the rest of the
-    dashboard."""
-    if text_fmt is None:
-        text_fmt = lambda v: f"{v:,.0f}"
-    plot_df = plot_df.copy()
-
-    DECREASE_COLOR = "#D93025"
-    INCREASE_COLOR = "#1E8E3E"
-    NEUTRAL_COLOR = "#1F2A44"
-
-    values = plot_df[y_col].tolist()
-    labels = []
-    for i, val in enumerate(values):
-        value_text = text_fmt(val)
-        if i == 0:
-            labels.append(value_text)
-            continue
-        prev = values[i - 1]
-        if prev == 0:
-            if val != 0:
-                bracket = f"<span style='color:{INCREASE_COLOR}'>(New)</span>"
-            else:
-                bracket = ""
-        else:
-            change = (val - prev) / abs(prev) * 100
-            color = INCREASE_COLOR if change >= 0 else DECREASE_COLOR
-            sign = "+" if change >= 0 else "−"
-            bracket = f"<span style='color:{color}'>({sign}{abs(change):.1f}%)</span>"
-        labels.append(f"{value_text} {bracket}" if bracket else value_text)
-    plot_df["_label"] = labels
-    plot_df["_hover_value"] = [text_fmt(v) for v in values]
-
-    fig = px.line(
-        plot_df, x=x_col, y=y_col, markers=True, text="_label", title=title,
-    )
-    fig.update_traces(
-        line=dict(width=3, color=ACCENT),
-        marker=dict(size=8, color=ACCENT),
-        textposition="top center",
-        textfont=dict(size=11, color=NEUTRAL_COLOR),
-        customdata=plot_df["_hover_value"],
-        hovertemplate="%{x}<br>" + y_label + ": <b>%{customdata}</b><extra></extra>",
-    )
-    fig.update_layout(
-        xaxis_title="Time Frame",
-        yaxis_title=y_label,
-        hovermode="x unified",
-        title_font=dict(size=16, color="#1F2A44"),
-        plot_bgcolor="white",
-        margin=dict(t=60, l=10, r=10, b=10),
-    )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor="#EEF1F6")
-    return fig
-
-
-def section_header(title: str, caption: str = ""):
-    st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
-    if caption:
-        st.markdown(f'<div class="section-caption">{caption}</div>', unsafe_allow_html=True)
-
-
-def blue_scale_style(pct_table: pd.DataFrame):
-    """Color each cell on a light-to-accent-blue scale based on its value,
-    normalized across the whole table. Pure CSS strings -- no matplotlib
-    dependency (unlike pandas' built-in .background_gradient())."""
-    values = pct_table.to_numpy(dtype=float)
-    vmin = values.min() if values.size else 0.0
-    vmax = values.max() if values.size else 1.0
-    span = (vmax - vmin) or 1.0
-
-    def _cell_style(val):
-        intensity = max(0.0, min(1.0, (val - vmin) / span))
-        r = int(232 - intensity * 182)
-        g = int(240 - intensity * 148)
-        b = int(250 - intensity * 60)
-        text_color = "white" if intensity > 0.6 else "#1F2A44"
-        return f"background-color: rgb({r},{g},{b}); color: {text_color};"
-
-    styler = pct_table.style.format("{:.2f}%")
+def _month_to_num(month_val) -> int:
+    """Convert a Month cell (number, numeric-string, or month name) to 1-12."""
+    if pd.isna(month_val):
+        return None
+    # Already numeric
     try:
-        return styler.map(_cell_style)  # pandas >= 2.1
-    except AttributeError:
-        return styler.applymap(_cell_style)  # older pandas
+        m = int(float(month_val))
+        if 1 <= m <= 12:
+            return m
+    except (ValueError, TypeError):
+        pass
+    # Text month name
+    text = re.sub(r"[^A-Za-z]", "", str(month_val)).upper()
+    return MONTH_NAME_TO_NUM.get(text, None)
 
 
-# ===========================================================================
-# SECTION 1: Zone Wise Sale Analysis
-# ===========================================================================
-if section.startswith("1."):
-    section_header(
-        "🗺️ Zone Wise Sale Analysis",
-        "Total sales trend for a chosen Sales Type and Zone, over time.",
-    )
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        sales_type = st.selectbox("Sales Type", SALES_TYPE_OPTIONS, key="s1_type")
-    with c2:
-        zone = st.selectbox("Zone", zone_options(df), key="s1_zone")
-    with c3:
-        time_frame = st.selectbox("Time Frame", TIME_FRAME_OPTIONS, key="s1_tf")
-
-    filtered = filter_by_sales_type(df, sales_type)
-    filtered = filter_by_zone(filtered, zone)
-
-    if filtered.empty:
-        st.warning("No data for this selection.")
+@st.cache_data(show_spinner=False)
+def load_dataframe(file_or_buffer, sheet_name: str = "Sheet1") -> pd.DataFrame:
+    """Load the raw sales data from an uploaded CSV/XLSX file-like object."""
+    name = getattr(file_or_buffer, "name", "") or ""
+    if name.lower().endswith((".xlsx", ".xls")):
+        df = pd.read_excel(file_or_buffer, sheet_name=sheet_name)
     else:
-        period_col = PERIOD_COL[time_frame]
-        period_order = get_period_order(filtered, time_frame)
-
-        agg = (
-            filtered.groupby(period_col, as_index=False)["Sales Amt"]
-            .sum()
-            .rename(columns={"Sales Amt": "Sales"})
-        )
-        agg[period_col] = pd.Categorical(agg[period_col], categories=period_order, ordered=True)
-        agg = agg.sort_values(period_col)
-
-        title = f"Sales Trend — {sales_type} — {zone} ({time_frame})"
-        fig = line_chart_with_labels(agg, period_col, "Sales", title, "Sales Amt")
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("View underlying data"):
-            st.dataframe(agg, use_container_width=True)
+        df = pd.read_csv(file_or_buffer)
+    return df
 
 
-# ===========================================================================
-# SECTION 2: Item Wise Sales Analysis
-# ===========================================================================
-elif section.startswith("2."):
-    section_header(
-        "📦 Item Wise Sales Analysis",
-        "Sales trend for a specific item, scoped to a Zone and Sales Type.",
-    )
+def normalize_google_sheet_url(url: str, gid: str = "0") -> str:
+    """Accept any normal Google Sheets URL (the /edit?usp=sharing link you
+    copy from the Share button, a /pub link, or an already-correct export
+    link) and turn it into a direct CSV export URL.
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        zone = st.selectbox("Zone", zone_options(df), key="s2_zone")
-    with c2:
-        sales_type = st.selectbox("Sales Type", SALES_TYPE_OPTIONS, key="s2_type")
-    with c3:
-        time_frame = st.selectbox("Time Frame", TIME_FRAME_OPTIONS, key="s2_tf")
+    This only works if the sheet's general access is set to
+    'Anyone with the link' (Viewer) -- Google will still reject the request
+    with a 401 for restricted/private sheets, since there is no login here.
+    """
+    url = url.strip()
 
-    scoped = filter_by_zone(df, zone)
-    scoped = filter_by_sales_type(scoped, sales_type)
+    # Already a published-to-web CSV link -> use as-is.
+    if "output=csv" in url or "/pub" in url and "csv" in url:
+        return url
 
-    item_options = sorted(scoped["Item Description"].dropna().unique().tolist())
-    if not item_options:
-        st.warning("No items available for this Zone / Sales Type combination.")
-    else:
-        item_desc = st.selectbox("Item Description", item_options, key="s2_item")
-        item_df = scoped[scoped["Item Description"] == item_desc]
+    # Standard /d/<ID>/... link -> build the export URL.
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
+    if match:
+        sheet_id = match.group(1)
+        gid_match = re.search(r"[?&#]gid=([0-9]+)", url)
+        use_gid = gid_match.group(1) if gid_match else gid
+        return f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={use_gid}"
 
-        period_col = PERIOD_COL[time_frame]
-        period_order = get_period_order(item_df, time_frame)
-
-        agg = (
-            item_df.groupby(period_col, as_index=False)["Sales Amt"]
-            .sum()
-            .rename(columns={"Sales Amt": "Sales"})
-        )
-        agg[period_col] = pd.Categorical(agg[period_col], categories=period_order, ordered=True)
-        agg = agg.sort_values(period_col)
-
-        title = f"Sales Trend — {item_desc} — {zone} ({time_frame})"
-        fig = line_chart_with_labels(agg, period_col, "Sales", title, "Sales Amt")
-        st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("View underlying data"):
-            st.dataframe(agg, use_container_width=True)
+    # Fallback: return the URL unchanged (e.g. user already pasted an export link)
+    return url
 
 
-# ===========================================================================
-# SECTION 3: Sales % Contribution Analysis
-# ===========================================================================
-elif section.startswith("3."):
-    section_header(
-        "📊 Sales Percentage Contribution Analysis",
-        "Each cell = a customer's Sales Amt ÷ total Sales Amt of the selected "
-        "Zone & Sales Type, for that period. Columns sum to 100%.",
-    )
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        sales_type = st.selectbox("Sales Type", SALES_TYPE_OPTIONS, key="s3_type")
-    with c2:
-        time_frame = st.selectbox("Time Frame", TIME_FRAME_OPTIONS, key="s3_tf")
-    with c3:
-        zone = st.selectbox("Zone", zone_options(df), key="s3_zone")
-
-    scoped = filter_by_sales_type(df, sales_type)
-    scoped = filter_by_zone(scoped, zone)
-
-    if scoped.empty:
-        st.warning("No data for this selection.")
-    else:
-        period_col = PERIOD_COL[time_frame]
-        period_order = get_period_order(scoped, time_frame)
-
-        cust_period = (
-            scoped.groupby(["Customer Display", period_col], as_index=False)["Sales Amt"]
-            .sum()
-        )
-        period_totals = scoped.groupby(period_col)["Sales Amt"].sum()
-
-        pivot = cust_period.pivot(index="Customer Display", columns=period_col, values="Sales Amt").fillna(0.0)
-        pivot = pivot.reindex(columns=period_order)
-
-        pct_table = pivot.div(period_totals.reindex(period_order), axis=1) * 100
-        pct_table = pct_table.round(2)
-
-        # Sort customers by their average contribution, descending
-        pct_table = pct_table.loc[pct_table.mean(axis=1).sort_values(ascending=False).index]
-
-        st.dataframe(
-            blue_scale_style(pct_table),
-            use_container_width=True,
+@st.cache_data(show_spinner=False)
+def load_dataframe_from_url(csv_url: str) -> pd.DataFrame:
+    """Load raw sales data from a public Google Sheets CSV export URL."""
+    direct_url = normalize_google_sheet_url(csv_url)
+    try:
+        return pd.read_csv(direct_url)
+    except Exception as e:
+        raise ValueError(
+            "Could not read the Google Sheet. Make sure its sharing setting "
+            "is 'Anyone with the link' (Viewer) -- Share -> General access -- "
+            f"then try again. (Underlying error: {e})"
         )
 
-        total_row = pd.DataFrame(
-            [pct_table.sum(axis=0)], index=["Total (check = 100%)"]
-        )
-        st.caption("Column totals (sanity check):")
-        st.dataframe(total_row.style.format("{:.2f}%"), use_container_width=True)
 
+def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """Clean columns, derive Sales Type, and build Yearly/Monthly/Quarterly
+    period labels + numeric sort keys used across all four sections."""
+    df = df_raw.copy()
 
-# ===========================================================================
-# SECTION 4: Sales % with Time Analysis
-# ===========================================================================
-elif section.startswith("4."):
-    section_header(
-        "📈 Sales Percentage with Time Analysis",
-        "Line = selected customer's Sales Amt ÷ total Sales Amt for the "
-        "selected Sales Type & Zone, tracked over the selected Time Frame.",
-    )
+    # Normalize column names (strip whitespace) but keep original labels
+    df.columns = [str(c).strip() for c in df.columns]
 
-    c1, c2 = st.columns(2)
-    with c1:
-        time_frame = st.selectbox("Time Frame", TIME_FRAME_OPTIONS, key="s4_tf")
-    with c2:
-        zone = st.selectbox("Zone", zone_options(df), key="s4_zone")
-
-    c3, c4 = st.columns(2)
-    with c3:
-        sales_type = st.selectbox("Sales Type", SALES_TYPE_OPTIONS, key="s4_type")
-
-    scoped_for_customers = filter_by_zone(df, zone)
-    scoped_for_customers = filter_by_sales_type(scoped_for_customers, sales_type)
-    customer_map = (
-        scoped_for_customers[["Customer Code", "Customer Display"]]
-        .drop_duplicates()
-        .sort_values("Customer Display")
-    )
-
-    with c4:
-        if customer_map.empty:
-            st.warning("No customers for this Zone / Sales Type.")
-            st.stop()
-        customer_display = st.selectbox(
-            "Customer Code", customer_map["Customer Display"].tolist(), key="s4_cust"
+    required = [
+        "Year", "Month", "Item No.", "Item Description", "Customer Code",
+        "Customer Name", "Quantity", "Sales Amt", "Zone",
+    ]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"The uploaded data is missing required column(s): {missing}. "
+            f"Found columns: {list(df.columns)}"
         )
 
-    scoped = filter_by_sales_type(df, sales_type)
-    scoped = filter_by_zone(scoped, zone)
+    # Types
+    _NUMBER_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
+    def _to_number(series):
+        """Robust numeric parser. Handles:
+        - comma-formatted numbers stored as text, e.g. "1,500.00"
+        - non-breaking / regular spaces used as thousands separators
+        - accounting-style negatives in parentheses, e.g. "(1,500.00)"
+        - a unicode minus sign ("−") instead of a plain hyphen
+        - stray currency symbols / letters (e.g. "Rs. 500,000") -- extracts
+          the actual numeric token instead of deleting letters in place,
+          which avoids things like "Rs." collapsing into a decimal point
+          and silently turning 500000 into 0.5.
+        Returns (parsed_series, unparsed_mask) where unparsed_mask flags
+        cells that had real (non-blank) content but failed to become a
+        number -- these must NOT be silently treated as correct zeros.
+        """
+        raw = series.fillna("").astype(str).str.strip()
+        was_blank = raw.isin(["", "nan", "None", "-", "–", "—"])
+
+        cleaned = raw.str.replace("\u00a0", "", regex=False)  # non-breaking space
+        cleaned = cleaned.str.replace(" ", "", regex=False)   # space thousands-sep
+        cleaned = cleaned.str.replace(",", "", regex=False)
+        cleaned = cleaned.str.replace("\u2212", "-", regex=False)  # unicode minus
+        cleaned = cleaned.str.replace(r"^\((.*)\)$", r"-\1", regex=True)  # (1500) -> -1500
+
+        def _extract(s):
+            m = _NUMBER_TOKEN_RE.search(s)
+            return float(m.group()) if m else None
+
+        parsed = cleaned.apply(_extract)
+        parsed = pd.Series(parsed, index=series.index, dtype="float64")
+        unparsed_mask = parsed.isna() & ~was_blank
+        return parsed, unparsed_mask
+
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
+    df["MonthNum"] = df["Month"].apply(_month_to_num)
+
+    # Sums naturally net out negative Sales Amt (returns/discounts) rather
+    # than excluding them, as long as they parse correctly. Any cell that
+    # had real content but couldn't be parsed is tracked (not silently
+    # zeroed) so the app can warn about it instead of hiding bad data.
+    sales_parsed, sales_bad_mask = _to_number(df["Sales Amt"])
+    qty_parsed, qty_bad_mask = _to_number(df["Quantity"])
+
+    bad_sales_examples = df.loc[sales_bad_mask, "Sales Amt"].fillna("").astype(str).unique().tolist()[:10]
+    bad_qty_examples = df.loc[qty_bad_mask, "Quantity"].fillna("").astype(str).unique().tolist()[:10]
+
+    df["Sales Amt"] = sales_parsed.fillna(0.0)
+    df["Quantity"] = qty_parsed.fillna(0.0)
+
+    rows_before_period_drop = len(df)
+    df = df.dropna(subset=["Year", "MonthNum"]).copy()
+    df["Year"] = df["Year"].astype(int)
+    df["MonthNum"] = df["MonthNum"].astype(int)
+    dropped_row_count = rows_before_period_drop - len(df)
+
+    # Sales Type derived from Item No. prefix
+    df["Sales Type"] = df["Item No."].apply(classify_sales_type)
+
+    # Zone / Customer cleanup
+    df["Zone"] = df["Zone"].fillna("Unassigned").astype(str).str.strip()
+    df["Zone"] = df["Zone"].replace({"": "Unassigned", "nan": "Unassigned", "None": "Unassigned"})
+    df["Customer Code"] = df["Customer Code"].astype(str).str.strip()
+    df["Customer Name"] = df["Customer Name"].astype(str).str.strip()
+    df["Customer Display"] = df["Customer Name"] + " (" + df["Customer Code"] + ")"
+
+    # --- Period labels + sort keys -----------------------------------
+    # Yearly
+    df["Period_Yearly"] = df["Year"].astype(str)
+    df["Sort_Yearly"] = df["Year"]
+
+    # Monthly  (e.g. "Jan-2025")
+    abbr_lookup = {
+        1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+        7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+    }
+    df["Period_Monthly"] = df["MonthNum"].map(abbr_lookup) + "-" + df["Year"].astype(str)
+    df["Sort_Monthly"] = df["Year"] * 100 + df["MonthNum"]
+
+    # Quarterly (e.g. "Q1-2025")
+    df["Quarter"] = ((df["MonthNum"] - 1) // 3) + 1
+    df["Period_Quarterly"] = "Q" + df["Quarter"].astype(str) + "-" + df["Year"].astype(str)
+    df["Sort_Quarterly"] = df["Year"] * 10 + df["Quarter"]
+
+    # Data-quality flags surfaced by the app (not silently swallowed).
+    df.attrs["sales_amt_unparsed_count"] = int(sales_bad_mask.sum())
+    df.attrs["sales_amt_unparsed_examples"] = bad_sales_examples
+    df.attrs["quantity_unparsed_count"] = int(qty_bad_mask.sum())
+    df.attrs["quantity_unparsed_examples"] = bad_qty_examples
+    df.attrs["rows_dropped_bad_period"] = dropped_row_count
+
+    return df
+
+
+PERIOD_COL = {
+    "Yearly": "Period_Yearly",
+    "Monthly": "Period_Monthly",
+    "Quarterly": "Period_Quarterly",
+}
+SORT_COL = {
+    "Yearly": "Sort_Yearly",
+    "Monthly": "Sort_Monthly",
+    "Quarterly": "Sort_Quarterly",
+}
+
+
+def filter_by_zone(df: pd.DataFrame, zone: str) -> pd.DataFrame:
+    if zone == ALL_ZONES_LABEL:
+        return df
+    return df[df["Zone"] == zone]
+
+
+def filter_by_sales_type(df: pd.DataFrame, sales_type: str) -> pd.DataFrame:
+    if sales_type == ALL_SALES_LABEL:
+        return df
+    return df[df["Sales Type"] == sales_type]
+
+
+def get_period_order(df: pd.DataFrame, time_frame: str):
+    """Return the list of period labels in chronological order for the
+    given (already filtered) dataframe."""
     period_col = PERIOD_COL[time_frame]
-    period_order = get_period_order(scoped, time_frame)
-
-    period_totals = scoped.groupby(period_col)["Sales Amt"].sum().reindex(period_order).fillna(0.0)
-    cust_scoped = scoped[scoped["Customer Display"] == customer_display]
-    cust_by_period = cust_scoped.groupby(period_col)["Sales Amt"].sum().reindex(period_order).fillna(0.0)
-
-    pct_series = (cust_by_period / period_totals.replace(0, pd.NA)) * 100
-    pct_series = pct_series.fillna(0.0)
-
-    plot_df = pd.DataFrame({
-        period_col: period_order,
-        "Contribution %": pct_series.values,
-    })
-    plot_df[period_col] = pd.Categorical(plot_df[period_col], categories=period_order, ordered=True)
-
-    title = f"{customer_display} — % of {sales_type} Sales in {zone} ({time_frame})"
-    fig = line_chart_with_labels(
-        plot_df, period_col, "Contribution %", title, "Contribution %",
-        text_fmt=lambda v: f"{v:.1f}%",
+    sort_col = SORT_COL[time_frame]
+    ordered = (
+        df[[period_col, sort_col]]
+        .drop_duplicates()
+        .sort_values(sort_col)[period_col]
+        .tolist()
     )
-    st.plotly_chart(fig, use_container_width=True)
-
-    with st.expander("View underlying data"):
-        st.dataframe(plot_df, use_container_width=True)
+    return ordered
