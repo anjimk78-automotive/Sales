@@ -131,27 +131,61 @@ def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
         )
 
     # Types
+    _NUMBER_TOKEN_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
     def _to_number(series):
-        # Handles comma-formatted numbers stored as text, e.g. "1,500.00",
-        # accounting-style negatives in parentheses e.g. "(1,500.00)",
-        # and leading/trailing currency symbols or whitespace.
-        cleaned = series.astype(str).str.strip()
+        """Robust numeric parser. Handles:
+        - comma-formatted numbers stored as text, e.g. "1,500.00"
+        - non-breaking / regular spaces used as thousands separators
+        - accounting-style negatives in parentheses, e.g. "(1,500.00)"
+        - a unicode minus sign ("−") instead of a plain hyphen
+        - stray currency symbols / letters (e.g. "Rs. 500,000") -- extracts
+          the actual numeric token instead of deleting letters in place,
+          which avoids things like "Rs." collapsing into a decimal point
+          and silently turning 500000 into 0.5.
+        Returns (parsed_series, unparsed_mask) where unparsed_mask flags
+        cells that had real (non-blank) content but failed to become a
+        number -- these must NOT be silently treated as correct zeros.
+        """
+        raw = series.fillna("").astype(str).str.strip()
+        was_blank = raw.isin(["", "nan", "None", "-", "–", "—"])
+
+        cleaned = raw.str.replace("\u00a0", "", regex=False)  # non-breaking space
+        cleaned = cleaned.str.replace(" ", "", regex=False)   # space thousands-sep
         cleaned = cleaned.str.replace(",", "", regex=False)
+        cleaned = cleaned.str.replace("\u2212", "-", regex=False)  # unicode minus
         cleaned = cleaned.str.replace(r"^\((.*)\)$", r"-\1", regex=True)  # (1500) -> -1500
-        cleaned = cleaned.str.replace(r"[^0-9.\-]", "", regex=True)  # strip stray symbols
-        cleaned = cleaned.replace("", pd.NA)
-        return pd.to_numeric(cleaned, errors="coerce")
+
+        def _extract(s):
+            m = _NUMBER_TOKEN_RE.search(s)
+            return float(m.group()) if m else None
+
+        parsed = cleaned.apply(_extract)
+        parsed = pd.Series(parsed, index=series.index, dtype="float64")
+        unparsed_mask = parsed.isna() & ~was_blank
+        return parsed, unparsed_mask
 
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
     df["MonthNum"] = df["Month"].apply(_month_to_num)
-    # Sums naturally net out negative Sales Amt (returns/discounts) rather
-    # than excluding them, as long as they parse correctly.
-    df["Sales Amt"] = _to_number(df["Sales Amt"]).fillna(0.0)
-    df["Quantity"] = _to_number(df["Quantity"]).fillna(0.0)
 
+    # Sums naturally net out negative Sales Amt (returns/discounts) rather
+    # than excluding them, as long as they parse correctly. Any cell that
+    # had real content but couldn't be parsed is tracked (not silently
+    # zeroed) so the app can warn about it instead of hiding bad data.
+    sales_parsed, sales_bad_mask = _to_number(df["Sales Amt"])
+    qty_parsed, qty_bad_mask = _to_number(df["Quantity"])
+
+    bad_sales_examples = df.loc[sales_bad_mask, "Sales Amt"].fillna("").astype(str).unique().tolist()[:10]
+    bad_qty_examples = df.loc[qty_bad_mask, "Quantity"].fillna("").astype(str).unique().tolist()[:10]
+
+    df["Sales Amt"] = sales_parsed.fillna(0.0)
+    df["Quantity"] = qty_parsed.fillna(0.0)
+
+    rows_before_period_drop = len(df)
     df = df.dropna(subset=["Year", "MonthNum"]).copy()
     df["Year"] = df["Year"].astype(int)
     df["MonthNum"] = df["MonthNum"].astype(int)
+    dropped_row_count = rows_before_period_drop - len(df)
 
     # Sales Type derived from Item No. prefix
     df["Sales Type"] = df["Item No."].apply(classify_sales_type)
@@ -180,6 +214,13 @@ def prepare_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df["Quarter"] = ((df["MonthNum"] - 1) // 3) + 1
     df["Period_Quarterly"] = "Q" + df["Quarter"].astype(str) + "-" + df["Year"].astype(str)
     df["Sort_Quarterly"] = df["Year"] * 10 + df["Quarter"]
+
+    # Data-quality flags surfaced by the app (not silently swallowed).
+    df.attrs["sales_amt_unparsed_count"] = int(sales_bad_mask.sum())
+    df.attrs["sales_amt_unparsed_examples"] = bad_sales_examples
+    df.attrs["quantity_unparsed_count"] = int(qty_bad_mask.sum())
+    df.attrs["quantity_unparsed_examples"] = bad_qty_examples
+    df.attrs["rows_dropped_bad_period"] = dropped_row_count
 
     return df
 
