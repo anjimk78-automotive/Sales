@@ -1,11 +1,12 @@
 """
 Sales Analysis Streamlit Application
 =====================================
-Data source: Sales Data Sheet (Year, Month, Item No., Item Description,
-Customer Code, Customer Name, Quantity, Sales Amt, Gross Profit (currency),
-Gross Profit, Gross Profit %, Column1, Zone)
+Live-connected to the company Sales Data Google Sheet (Sheet1):
+    Year, Month, Item No., Item Description, Customer Code, Customer Name,
+    Quantity, Sales Amt, Gross Profit (currency), Gross Profit,
+    Gross Profit %, Column1, Zone
 
-Four sections, selectable from a sidebar on the RIGHT of the screen:
+Four sections, selectable from the sidebar on the RIGHT of the screen:
     1. Zone Wise Sale Analysis
     2. Item Wise Sales Analysis
     3. Sales % Contribution Analysis
@@ -14,9 +15,10 @@ Four sections, selectable from a sidebar on the RIGHT of the screen:
 Run with:  streamlit run app.py
 """
 
+from datetime import datetime
+
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from data_utils import (
@@ -28,58 +30,137 @@ from data_utils import (
     filter_by_sales_type,
     filter_by_zone,
     get_period_order,
-    load_dataframe,
     load_dataframe_from_url,
     prepare_dataframe,
 )
 
-st.set_page_config(page_title="Sales Analysis", layout="wide")
+# ---------------------------------------------------------------------------
+# Fixed data source — your live Google Sheet. No upload / link entry needed.
+# To point this app at a different sheet, just change the URL below.
+# ---------------------------------------------------------------------------
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1vXveJ2TUXeeyWg5DO2aYe-7yfmEc3Azau4g1NghNQDo/edit?gid=0#gid=0"
+CACHE_TTL_SECONDS = 300  # data refreshes automatically every 5 minutes
+
+ACCENT = "#2E5AAC"
+CHART_COLORWAY = ["#2E5AAC", "#E8833A", "#3FA672", "#B23B5E", "#7B5EA7", "#4FA8C9"]
+
+st.set_page_config(
+    page_title="Sales Analysis Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # ---------------------------------------------------------------------------
-# Push the native Streamlit sidebar to the RIGHT of the screen (CSS only).
+# Global styling: right-hand sidebar + a cleaner, more "designed" look.
 # ---------------------------------------------------------------------------
 st.markdown(
-    """
+    f"""
     <style>
-        [data-testid="stAppViewContainer"] > .main {
-            order: 1;
-        }
-        section[data-testid="stSidebar"] {
-            order: 2;
-            border-left: 1px solid rgba(49, 51, 63, 0.2);
-            border-right: none;
-        }
-        [data-testid="stAppViewContainer"] {
+        html, body, [class*="css"] {{
+            font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        }}
+
+        /* --- Put the native sidebar on the RIGHT --- */
+        [data-testid="stAppViewContainer"] {{
             display: flex;
             flex-direction: row;
-        }
-        [data-testid="collapsedControl"] {
+        }}
+        [data-testid="stAppViewContainer"] > .main {{
+            order: 1;
+        }}
+        section[data-testid="stSidebar"] {{
+            order: 2;
+            border-left: 1px solid rgba(49, 51, 63, 0.15);
+            border-right: none;
+        }}
+        [data-testid="collapsedControl"] {{
             left: auto;
             right: 0.5rem;
-        }
+        }}
+
+        /* --- Page header banner --- */
+        .app-header {{
+            background: linear-gradient(90deg, {ACCENT} 0%, #4A78C9 100%);
+            padding: 1.4rem 1.8rem;
+            border-radius: 12px;
+            color: white;
+            margin-bottom: 1.4rem;
+        }}
+        .app-header h1 {{
+            margin: 0;
+            font-size: 1.6rem;
+            font-weight: 700;
+        }}
+        .app-header p {{
+            margin: 0.25rem 0 0 0;
+            opacity: 0.9;
+            font-size: 0.92rem;
+        }}
+
+        /* --- Section header --- */
+        .section-title {{
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #1F2A44;
+            margin-bottom: 0.1rem;
+        }}
+        .section-caption {{
+            color: #5B6472;
+            font-size: 0.92rem;
+            margin-bottom: 1.1rem;
+        }}
+
+        /* --- Metric cards --- */
+        div[data-testid="stMetric"] {{
+            background: #F7F9FC;
+            border: 1px solid #E7EBF2;
+            border-radius: 10px;
+            padding: 0.9rem 1rem 0.6rem 1rem;
+        }}
+        div[data-testid="stMetricLabel"] {{
+            font-weight: 600;
+            color: #5B6472;
+        }}
+
+        /* --- Sidebar nav radio buttons look like nav items --- */
+        section[data-testid="stSidebar"] .stRadio > label {{
+            font-weight: 600;
+        }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+
 # ---------------------------------------------------------------------------
-# Sidebar: data source + navigation
+# Data loading — cached, auto-refreshing, live from the Google Sheet above.
 # ---------------------------------------------------------------------------
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Connecting to live sales sheet…")
+def get_data(url: str):
+    raw = load_dataframe_from_url(url)
+    return prepare_dataframe(raw)
+
+
 with st.sidebar:
-    st.title("📊 Sales Analysis")
+    st.markdown("### 📊 Sales Analysis")
+    st.caption("Connected to the live Sales Data sheet.")
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        get_data.clear()
+        st.rerun()
 
-    with st.expander("📁 Data Source", expanded="data" not in st.session_state):
-        st.caption(
-            "Paste your Google Sheets link below. The sheet's General "
-            "access must be set to 'Anyone with the link' - Viewer "
-            "(Share button, top right of the sheet) or Google will block "
-            "this app from reading it."
-        )
-        sheet_url = st.text_input("Google Sheet link", value="")
-        load_clicked = st.button("Load / Refresh Data", use_container_width=True)
+try:
+    df = get_data(SHEET_URL)
+    load_error = None
+except Exception as e:
+    df = None
+    load_error = e
 
+with st.sidebar:
+    if df is not None:
+        st.caption(f"Last loaded: {datetime.now().strftime('%b %d, %Y • %I:%M %p')}")
     st.markdown("---")
-    st.subheader("Sections")
+    st.markdown("#### Sections")
     section = st.radio(
         "Go to:",
         [
@@ -91,71 +172,90 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-# ---------------------------------------------------------------------------
-# Load data (persist across reruns via session_state)
-# ---------------------------------------------------------------------------
-if load_clicked or ("data" not in st.session_state):
-    try:
-        if sheet_url.strip():
-            raw = load_dataframe_from_url(sheet_url.strip())
-        elif "data" in st.session_state:
-            raw = None
-        else:
-            raw = None
+st.markdown(
+    """
+    <div class="app-header">
+        <h1>📊 Sales Analysis Dashboard</h1>
+        <p>Zone, item, and customer-level sales performance — live from the company Sales Data sheet.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-        if raw is not None:
-            st.session_state["data"] = prepare_dataframe(raw)
-    except Exception as e:
-        st.sidebar.error(f"Could not load data: {e}")
-
-if "data" not in st.session_state:
-    st.info(
-        "👈 Upload your Sales Data (CSV/XLSX export of **Sheet1**) or paste a "
-        "public Google Sheet CSV link in the sidebar to get started."
+if load_error is not None:
+    st.error(
+        "Could not load the live sheet. Make sure its General access is set "
+        "to **'Anyone with the link' (Viewer)** in Google Sheets' Share "
+        f"dialog, then click **Refresh Data**.\n\nDetails: {load_error}"
     )
     st.stop()
 
-df = st.session_state["data"]
+# ---------------------------------------------------------------------------
+# Top-line KPIs
+# ---------------------------------------------------------------------------
+k1, k2, k3, k4, k5 = st.columns(5)
+k1.metric("Total Sales", f"{df['Sales Amt'].sum():,.0f}")
+k2.metric("Total Quantity", f"{df['Quantity'].sum():,.0f}")
+k3.metric("Customers", f"{df['Customer Code'].nunique():,}")
+k4.metric("Zones", f"{df['Zone'].nunique():,}")
+k5.metric("Period Covered", f"{df['Year'].min()}–{df['Year'].max()}")
+st.markdown("<br>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+px.defaults.color_discrete_sequence = CHART_COLORWAY
+px.defaults.template = "plotly_white"
+
 
 def zone_options(frame: pd.DataFrame):
     return [ALL_ZONES_LABEL] + sorted(frame["Zone"].dropna().unique().tolist())
 
 
-def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, color_col=None, text_fmt=None):
-    """Plotly line chart with the value shown at each point."""
+def line_chart_with_labels(plot_df, x_col, y_col, title, y_label, text_fmt=None):
+    """Plotly line chart with the value shown at each point, styled to match
+    the rest of the dashboard."""
     if text_fmt is None:
         text_fmt = lambda v: f"{v:,.0f}"
     plot_df = plot_df.copy()
     plot_df["_label"] = plot_df[y_col].apply(text_fmt)
 
-    if color_col:
-        fig = px.line(
-            plot_df, x=x_col, y=y_col, color=color_col, markers=True,
-            text="_label", title=title,
-        )
-    else:
-        fig = px.line(
-            plot_df, x=x_col, y=y_col, markers=True, text="_label", title=title,
-        )
-    fig.update_traces(textposition="top center")
+    fig = px.line(
+        plot_df, x=x_col, y=y_col, markers=True, text="_label", title=title,
+    )
+    fig.update_traces(
+        line=dict(width=3, color=ACCENT),
+        marker=dict(size=8, color=ACCENT),
+        textposition="top center",
+        textfont=dict(size=11, color="#1F2A44"),
+    )
     fig.update_layout(
         xaxis_title="Time Frame",
         yaxis_title=y_label,
         hovermode="x unified",
-        legend_title_text="",
+        title_font=dict(size=16, color="#1F2A44"),
+        plot_bgcolor="white",
+        margin=dict(t=60, l=10, r=10, b=10),
     )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, gridcolor="#EEF1F6")
     return fig
+
+
+def section_header(title: str, caption: str = ""):
+    st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
+    if caption:
+        st.markdown(f'<div class="section-caption">{caption}</div>', unsafe_allow_html=True)
 
 
 # ===========================================================================
 # SECTION 1: Zone Wise Sale Analysis
 # ===========================================================================
 if section.startswith("1."):
-    st.header("1. Zone Wise Sale Analysis")
+    section_header(
+        "🗺️ Zone Wise Sale Analysis",
+        "Total sales trend for a chosen Sales Type and Zone, over time.",
+    )
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -194,7 +294,10 @@ if section.startswith("1."):
 # SECTION 2: Item Wise Sales Analysis
 # ===========================================================================
 elif section.startswith("2."):
-    st.header("2. Item Wise Sales Analysis")
+    section_header(
+        "📦 Item Wise Sales Analysis",
+        "Sales trend for a specific item, scoped to a Zone and Sales Type.",
+    )
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -237,10 +340,10 @@ elif section.startswith("2."):
 # SECTION 3: Sales % Contribution Analysis
 # ===========================================================================
 elif section.startswith("3."):
-    st.header("3. Sales Percentage Contribution Analysis")
-    st.caption(
+    section_header(
+        "📊 Sales Percentage Contribution Analysis",
         "Each cell = a customer's Sales Amt ÷ total Sales Amt of the selected "
-        "Zone & Sales Type, for that period. Columns sum to 100%."
+        "Zone & Sales Type, for that period. Columns sum to 100%.",
     )
 
     c1, c2, c3 = st.columns(3)
@@ -291,10 +394,10 @@ elif section.startswith("3."):
 # SECTION 4: Sales % with Time Analysis
 # ===========================================================================
 elif section.startswith("4."):
-    st.header("4. Sales Percentage with Time Analysis")
-    st.caption(
+    section_header(
+        "📈 Sales Percentage with Time Analysis",
         "Line = selected customer's Sales Amt ÷ total Sales Amt for the "
-        "selected Sales Type & Zone, tracked over the selected Time Frame."
+        "selected Sales Type & Zone, tracked over the selected Time Frame.",
     )
 
     c1, c2 = st.columns(2)
