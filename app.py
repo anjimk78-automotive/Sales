@@ -52,31 +52,13 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Global styling: right-hand sidebar + a cleaner, more "designed" look.
+# Global styling: a cleaner, more "designed" look.
 # ---------------------------------------------------------------------------
 st.markdown(
     f"""
     <style>
         html, body, [class*="css"] {{
             font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-        }}
-
-        /* --- Put the native sidebar on the RIGHT --- */
-        [data-testid="stAppViewContainer"] {{
-            display: flex;
-            flex-direction: row;
-        }}
-        [data-testid="stAppViewContainer"] > .main {{
-            order: 1;
-        }}
-        section[data-testid="stSidebar"] {{
-            order: 2;
-            border-left: 1px solid rgba(49, 51, 63, 0.15);
-            border-right: none;
-        }}
-        [data-testid="collapsedControl"] {{
-            left: auto;
-            right: 0.5rem;
         }}
 
         /* --- Page header banner --- */
@@ -128,6 +110,7 @@ st.markdown(
             font-weight: 600;
         }}
     </style>
+
     """,
     unsafe_allow_html=True,
 )
@@ -189,17 +172,6 @@ if load_error is not None:
         f"dialog, then click **Refresh Data**.\n\nDetails: {load_error}"
     )
     st.stop()
-
-# ---------------------------------------------------------------------------
-# Top-line KPIs
-# ---------------------------------------------------------------------------
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Total Sales", f"{df['Sales Amt'].sum():,.0f}")
-k2.metric("Total Quantity", f"{df['Quantity'].sum():,.0f}")
-k3.metric("Customers", f"{df['Customer Code'].nunique():,}")
-k4.metric("Zones", f"{df['Zone'].nunique():,}")
-k5.metric("Period Covered", f"{df['Year'].min()}–{df['Year'].max()}")
-st.markdown("<br>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
