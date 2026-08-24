@@ -220,6 +220,30 @@ def section_header(title: str, caption: str = ""):
         st.markdown(f'<div class="section-caption">{caption}</div>', unsafe_allow_html=True)
 
 
+def blue_scale_style(pct_table: pd.DataFrame):
+    """Color each cell on a light-to-accent-blue scale based on its value,
+    normalized across the whole table. Pure CSS strings -- no matplotlib
+    dependency (unlike pandas' built-in .background_gradient())."""
+    values = pct_table.to_numpy(dtype=float)
+    vmin = values.min() if values.size else 0.0
+    vmax = values.max() if values.size else 1.0
+    span = (vmax - vmin) or 1.0
+
+    def _cell_style(val):
+        intensity = max(0.0, min(1.0, (val - vmin) / span))
+        r = int(232 - intensity * 182)
+        g = int(240 - intensity * 148)
+        b = int(250 - intensity * 60)
+        text_color = "white" if intensity > 0.6 else "#1F2A44"
+        return f"background-color: rgb({r},{g},{b}); color: {text_color};"
+
+    styler = pct_table.style.format("{:.2f}%")
+    try:
+        return styler.map(_cell_style)  # pandas >= 2.1
+    except AttributeError:
+        return styler.applymap(_cell_style)  # older pandas
+
+
 # ===========================================================================
 # SECTION 1: Zone Wise Sale Analysis
 # ===========================================================================
@@ -351,7 +375,7 @@ elif section.startswith("3."):
         pct_table = pct_table.loc[pct_table.mean(axis=1).sort_values(ascending=False).index]
 
         st.dataframe(
-            pct_table.style.format("{:.2f}%").background_gradient(cmap="Blues", axis=None),
+            blue_scale_style(pct_table),
             use_container_width=True,
         )
 
