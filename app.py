@@ -170,6 +170,27 @@ if load_error is not None:
     )
     st.stop()
 
+# Surface any rows that didn't parse cleanly instead of silently treating
+# them as 0 / dropping them, so totals can be trusted.
+_bad_sales = df.attrs.get("sales_amt_unparsed_count", 0)
+_bad_qty = df.attrs.get("quantity_unparsed_count", 0)
+_dropped = df.attrs.get("rows_dropped_bad_period", 0)
+if _bad_sales or _bad_qty or _dropped:
+    msg_parts = []
+    if _bad_sales:
+        examples = ", ".join(repr(v) for v in df.attrs.get("sales_amt_unparsed_examples", [])[:5])
+        msg_parts.append(f"**{_bad_sales}** row(s) had a Sales Amt value that couldn't be read as a number (treated as 0) — e.g. {examples}.")
+    if _bad_qty:
+        examples = ", ".join(repr(v) for v in df.attrs.get("quantity_unparsed_examples", [])[:5])
+        msg_parts.append(f"**{_bad_qty}** row(s) had a Quantity value that couldn't be read as a number (treated as 0) — e.g. {examples}.")
+    if _dropped:
+        msg_parts.append(f"**{_dropped}** row(s) were excluded because Year/Month couldn't be read.")
+    st.warning(
+        "⚠️ Data quality issue found in the sheet — some totals may be "
+        "understated:\n\n" + "\n\n".join(msg_parts) +
+        "\n\nFix these cells in the sheet and the numbers will update automatically."
+    )
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
