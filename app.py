@@ -297,7 +297,7 @@ def blue_scale_style(pct_table: pd.DataFrame):
 if section.startswith("1."):
     section_header(
         "🗺️ Zone Wise Sale Analysis",
-        "Total sales trend for a chosen Sales Type and Zone, over time.",
+        "Total quantity trend for a chosen Sales Type and Zone, over time.",
     )
 
     c1, c2, c3 = st.columns(3)
@@ -318,15 +318,15 @@ if section.startswith("1."):
         period_order = get_period_order(filtered, time_frame)
 
         agg = (
-            filtered.groupby(period_col, as_index=False)["Sales Amt"]
+            filtered.groupby(period_col, as_index=False)["Quantity"]
             .sum()
-            .rename(columns={"Sales Amt": "Sales"})
+            .rename(columns={"Quantity": "Qty"})
         )
         agg[period_col] = pd.Categorical(agg[period_col], categories=period_order, ordered=True)
         agg = agg.sort_values(period_col)
 
-        title = f"Sales Trend — {sales_type} — {zone} ({time_frame})"
-        fig = line_chart_with_labels(agg, period_col, "Sales", title, "Sales Amt")
+        title = f"Quantity Trend — {sales_type} — {zone} ({time_frame})"
+        fig = line_chart_with_labels(agg, period_col, "Qty", title, "Quantity")
         st.plotly_chart(fig, use_container_width=True)
 
         with st.expander("View underlying data"):
@@ -339,7 +339,7 @@ if section.startswith("1."):
 elif section.startswith("2."):
     section_header(
         "📦 Item Wise Sales Analysis",
-        "Sales trend for a specific item, scoped to a Zone and Sales Type.",
+        "Quantity trend for a specific item, scoped to a Zone and Sales Type.",
     )
 
     c1, c2, c3 = st.columns(3)
@@ -364,15 +364,15 @@ elif section.startswith("2."):
         period_order = get_period_order(item_df, time_frame)
 
         agg = (
-            item_df.groupby(period_col, as_index=False)["Sales Amt"]
+            item_df.groupby(period_col, as_index=False)["Quantity"]
             .sum()
-            .rename(columns={"Sales Amt": "Sales"})
+            .rename(columns={"Quantity": "Qty"})
         )
         agg[period_col] = pd.Categorical(agg[period_col], categories=period_order, ordered=True)
         agg = agg.sort_values(period_col)
 
-        title = f"Sales Trend — {item_desc} — {zone} ({time_frame})"
-        fig = line_chart_with_labels(agg, period_col, "Sales", title, "Sales Amt")
+        title = f"Quantity Trend — {item_desc} — {zone} ({time_frame})"
+        fig = line_chart_with_labels(agg, period_col, "Qty", title, "Quantity")
         st.plotly_chart(fig, use_container_width=True)
 
         with st.expander("View underlying data"):
@@ -385,7 +385,7 @@ elif section.startswith("2."):
 elif section.startswith("3."):
     section_header(
         "📊 Sales Percentage Contribution Analysis",
-        "Each cell = a customer's Sales Amt ÷ total Sales Amt of the selected "
+        "Each cell = a customer's Quantity ÷ total Quantity of the selected "
         "Zone & Sales Type, for that period. Columns sum to 100%.",
     )
 
@@ -407,12 +407,12 @@ elif section.startswith("3."):
         period_order = get_period_order(scoped, time_frame)
 
         cust_period = (
-            scoped.groupby(["Customer Display", period_col], as_index=False)["Sales Amt"]
+            scoped.groupby(["Customer Display", period_col], as_index=False)["Quantity"]
             .sum()
         )
-        period_totals = scoped.groupby(period_col)["Sales Amt"].sum()
+        period_totals = scoped.groupby(period_col)["Quantity"].sum()
 
-        pivot = cust_period.pivot(index="Customer Display", columns=period_col, values="Sales Amt").fillna(0.0)
+        pivot = cust_period.pivot(index="Customer Display", columns=period_col, values="Quantity").fillna(0.0)
         pivot = pivot.reindex(columns=period_order)
 
         pct_table = pivot.div(period_totals.reindex(period_order), axis=1) * 100
@@ -439,7 +439,7 @@ elif section.startswith("3."):
 elif section.startswith("4."):
     section_header(
         "📈 Sales Percentage with Time Analysis",
-        "Line = selected customer's Sales Amt ÷ total Sales Amt for the "
+        "Line = selected customer's Quantity ÷ total Quantity for the "
         "selected Sales Type & Zone, tracked over the selected Time Frame.",
     )
 
@@ -475,9 +475,9 @@ elif section.startswith("4."):
     period_col = PERIOD_COL[time_frame]
     period_order = get_period_order(scoped, time_frame)
 
-    period_totals = scoped.groupby(period_col)["Sales Amt"].sum().reindex(period_order).fillna(0.0)
+    period_totals = scoped.groupby(period_col)["Quantity"].sum().reindex(period_order).fillna(0.0)
     cust_scoped = scoped[scoped["Customer Display"] == customer_display]
-    cust_by_period = cust_scoped.groupby(period_col)["Sales Amt"].sum().reindex(period_order).fillna(0.0)
+    cust_by_period = cust_scoped.groupby(period_col)["Quantity"].sum().reindex(period_order).fillna(0.0)
 
     pct_series = (cust_by_period / period_totals.replace(0, pd.NA)) * 100
     pct_series = pct_series.fillna(0.0)
@@ -488,7 +488,7 @@ elif section.startswith("4."):
     })
     plot_df[period_col] = pd.Categorical(plot_df[period_col], categories=period_order, ordered=True)
 
-    title = f"{customer_display} — % of {sales_type} Sales in {zone} ({time_frame})"
+    title = f"{customer_display} — % of {sales_type} Quantity in {zone} ({time_frame})"
     fig = line_chart_with_labels(
         plot_df, period_col, "Contribution %", title, "Contribution %",
         text_fmt=lambda v: f"{v:.1f}%",
